@@ -18,6 +18,10 @@ coverage/
 .DS_Store
 *.tsbuildinfo
 
+
+#
+memory/
+design_guidelines.json
 # ================================
 # FastAPI / Python Backend
 # ================================
