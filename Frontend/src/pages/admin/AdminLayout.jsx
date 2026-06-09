@@ -13,6 +13,9 @@ export default function AdminLayout() {
     });
   }, [navigate]);
 
+  const token = localStorage.getItem("admin_token");
+  if (!token) return <Navigate to="/admin/login" />;
+
   const logout = async () => {
     await api.post("/auth/logout").catch(() => {});
     localStorage.removeItem("admin_token");
