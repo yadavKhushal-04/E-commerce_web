@@ -408,6 +408,21 @@ async def verify_order_payment(order_id: str, body: dict):
         "status": "confirmed",
         "razorpay_payment_id": payment_id,
     }})
+
+    #Updating Stock
+    for item in updated.get("items", []):
+        pid = item.get("product_id")
+        qty = item.get("quantity", 1)
+        if pid:
+            try:
+                await db.products.update_one(
+                    {"_id": ObjectId(pid), "stock": {"$gte": qty}},
+                    {"$inc": {"stock": -qty}}
+                )
+            except Exception:
+                pass
+
+
     updated = await db.orders.find_one({"_id": oid})
     serialized = _serialize_order(updated)
     # Send confirmation email

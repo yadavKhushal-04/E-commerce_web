@@ -88,13 +88,16 @@ export default function ProductDetail() {
           )}
 
           <div className="mt-10 flex flex-col gap-3">
-            <button
+            <button 
               onClick={handleAdd}
+              disabled={product.stock === 0}
               data-testid="add-to-bag-button"
-              className="bg-forest text-bg py-5 text-xs tracking-[0.25em] uppercase hover:bg-forest-dark transition-colors"
+              className="bg-forest text-bg py-5 text-xs tracking-[0.25em] uppercase hover:bg-forest-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Add to Bag
+            {product.stock === 0 ? "Sold Out" : "Add to Bag"}
             </button>
+              {/* Add to Bag
+            </button> */}
             <Link
               to="/custom"
               className="border border-forest text-forest py-5 text-xs tracking-[0.25em] uppercase text-center hover:bg-surface transition-colors"
@@ -105,7 +108,7 @@ export default function ProductDetail() {
 
           <div className="mt-12 pt-8 border-t border-line space-y-2 text-sm text-muted">
             <p>· Handcrafted, ships in 5-7 business days</p>
-            <p>· Free shipping over ₹2,499</p>
+            <p>· Free shipping over ₹1,499</p>
             <p>· 7-day exchange on unworn pieces</p>
           </div>
         </div>
