@@ -18,7 +18,7 @@ from bson import ObjectId
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, Response, Header, Query
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import  AsyncIOMotorClient 
 from pydantic import BaseModel, EmailStr, Field
 
 # -------------------- Config --------------------
@@ -36,6 +36,8 @@ RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', '')
 RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+FREE_SHIPPING_THRESHOLD = 1499
+SHIPPING_CHARGE = 59
 
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 
@@ -315,6 +317,8 @@ def _serialize_order(o: dict) -> dict:
         "phone": o.get("phone", ""),
         "address": o["address"],
         "items": o.get("items", []),
+        "subtotal": o.get("subtotal", o.get("total", 0)),  # fallback for old orders
+        "shipping": o.get("shipping", 0),
         "total": o.get("total", 0),
         "status": o.get("status", "pending"),
         "payment_status": o.get("payment_status", "pending"),
@@ -325,7 +329,11 @@ def _serialize_order(o: dict) -> dict:
 
 @api.post("/orders")
 async def create_order(payload: OrderIn):
-    total = sum(i.price * i.quantity for i in payload.items)
+    # total = sum(i.price * i.quantity for i in payload.items)
+    subtotal = sum(i.price * i.quantity for i in payload.items)
+    shipping = 0 if subtotal >= FREE_SHIPPING_THRESHOLD else SHIPPING_CHARGE
+    total = subtotal + shipping
+    
     if total <= 0:
         raise HTTPException(status_code=400, detail="Empty cart")
 
@@ -350,6 +358,8 @@ async def create_order(payload: OrderIn):
         "phone": payload.phone,
         "address": payload.address,
         "items": [i.model_dump() for i in payload.items],
+        "subtotal": subtotal,
+        "shipping": shipping,
         "total": total,
         "status": "pending",
         "payment_status": "pending",
@@ -423,6 +433,19 @@ async def get_order(order_id: str):
 async def admin_list_orders(admin: dict = Depends(get_current_admin)):
     cursor = db.orders.find().sort("created_at", -1)
     return [_serialize_order(o) async for o in cursor]
+
+@api.put("/admin/orders/{order_id}/status")
+async def update_order_status(order_id: str, body: dict, admin: dict = Depends(get_current_admin)):
+    try:
+        oid = ObjectId(order_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid id")
+    status = body.get("status")
+    if not status:
+        raise HTTPException(status_code=400, detail="Status required")
+    await db.orders.update_one({"_id": oid}, {"$set": {"status": status}})
+    o = await db.orders.find_one({"_id": oid})
+    return _serialize_order(o)
 
 # ---- Custom design requests ----
 def _serialize_request(r: dict) -> dict:

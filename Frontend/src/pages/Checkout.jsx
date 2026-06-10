@@ -113,6 +113,19 @@ export default function Checkout() {
                 <span>{formatINR(i.price * i.quantity)}</span>
               </div>
             ))}
+
+            
+            <div className="border-t border-line mt-4 pt-4 space-y-2 text-sm">
+              <div className="flex justify-between text-muted">
+                <span>Subtotal</span>
+                <span>{formatINR(total)}</span>
+              </div>
+              <div className="flex justify-between text-muted">
+                <span>Shipping</span>
+                <span>{total >= 2499 ? <span className="text-forest">Free</span> : formatINR(99)}</span>
+              </div>
+            </div>
+            
           </div>
           <div className="border-t border-line mt-6 pt-6 flex justify-between">
             <span className="label-eyebrow">Total</span>
