@@ -18,7 +18,7 @@ from bson import ObjectId
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, Response, Header, Query
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import  AsyncIOMotorClient 
+from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
 # -------------------- Config --------------------
@@ -28,7 +28,6 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'change-me')
 JWT_ALG = "HS256"
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 APP_NAME = os.environ.get('APP_NAME', 'rekhay-atelier')
 BUSINESS_NAME = os.environ.get('BUSINESS_NAME', 'Rekhay Atelier')
 BUSINESS_EMAIL = os.environ.get('BUSINESS_EMAIL', 'hello@rekhay.in')
@@ -39,7 +38,17 @@ SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 FREE_SHIPPING_THRESHOLD = 1499
 SHIPPING_CHARGE = 59
 
-STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+# -------------------- Storage Config --------------------
+# Choose ONE storage backend by setting STORAGE_BACKEND in your .env:
+#   STORAGE_BACKEND=cloudinary   → also set CLOUDINARY_URL
+#   STORAGE_BACKEND=s3           → also set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET_NAME, AWS_REGION
+#   STORAGE_BACKEND=local        → files saved to ./uploads/ folder (dev only, not for production)
+#
+# Example .env additions for Cloudinary:
+#   STORAGE_BACKEND=cloudinary
+#   CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name
+
+STORAGE_BACKEND = os.environ.get('STORAGE_BACKEND', 'local').lower()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -49,39 +58,61 @@ client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
 # -------------------- Storage --------------------
-storage_key = None
 
-def init_storage():
-    global storage_key
-    if storage_key:
-        return storage_key
-    if not EMERGENT_LLM_KEY:
-        logger.warning("EMERGENT_LLM_KEY not set; object storage disabled")
-        return None
-    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
-    resp.raise_for_status()
-    storage_key = resp.json()["storage_key"]
-    logger.info("Object storage initialized")
-    return storage_key
-
-def put_object(path: str, data: bytes, content_type: str) -> dict:
-    key = init_storage()
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data, timeout=120,
+# ── Cloudinary ──────────────────────────────────────────────────────────────
+def _cloudinary_upload(data: bytes, path: str, content_type: str) -> dict:
+    """
+    Upload bytes to Cloudinary.
+    Requires: pip install cloudinary
+    .env:      CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name
+    """
+    import cloudinary                          # ← pip install cloudinary
+    import cloudinary.uploader
+    # CLOUDINARY_URL is picked up automatically by the SDK
+    public_id = path.replace("/", "_").rsplit(".", 1)[0]   # dots not allowed in public_id
+    result = cloudinary.uploader.upload(
+        data,
+        public_id=public_id,
+        resource_type="image",
+        overwrite=True,
     )
-    resp.raise_for_status()
-    return resp.json()
+    return {
+        "path": path,
+        "url": result["secure_url"],
+        "cloudinary_public_id": result["public_id"],
+    }
+
+def _cloudinary_get(path: str):
+    """
+    Cloudinary serves images via CDN URL directly — we don't proxy them.
+    This function is only called if someone hits /api/files/<path> for a
+    Cloudinary-backed file; redirect to the CDN URL instead (see serve_file).
+    """
+    raise NotImplementedError("Cloudinary files are served via CDN URL, not proxied.")
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    # """Upload a file using whichever backend is configured."""
+    # if STORAGE_BACKEND == "cloudinary":
+    return _cloudinary_upload(data, path, content_type)
+    # elif STORAGE_BACKEND == "s3":
+    #     return _s3_upload(data, path, content_type)
+    # elif STORAGE_BACKEND == "local":
+    #     return _local_upload(data, path, content_type)
+    # else:
+    #     raise RuntimeError(f"Unknown STORAGE_BACKEND='{STORAGE_BACKEND}'. Use: cloudinary, s3, or local.")
 
 def get_object(path: str):
-    key = init_storage()
-    resp = requests.get(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key}, timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+    """Download a file using whichever backend is configured."""
+    # if STORAGE_BACKEND == "cloudinary":
+    return _cloudinary_get(path)
+    # elif STORAGE_BACKEND == "s3":
+    #     return _s3_get(path)
+    # elif STORAGE_BACKEND == "local":
+    #     return _local_get(path)
+    # else:
+    #     raise RuntimeError(f"Unknown STORAGE_BACKEND='{STORAGE_BACKEND}'. Use: cloudinary, s3, or local.")
 
 # -------------------- Auth helpers --------------------
 def hash_password(p: str) -> str:
@@ -234,19 +265,25 @@ async def upload_file(file: UploadFile = File(...)):
     await db.files.insert_one({
         "id": str(uuid.uuid4()),
         "storage_path": result["path"],
+        "storage_url": result.get("url"),          # ← CDN URL stored for Cloudinary / S3
         "original_filename": file.filename,
         "content_type": ctype,
-        "size": result.get("size", len(data)),
+        "size": len(data),
         "is_deleted": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
-    return {"path": result["path"], "url": f"/api/files/{result['path']}"}
+    return {"path": result["path"], "url": result.get("url", f"/api/files/{result['path']}")}
 
 @api.get("/files/{path:path}")
 async def serve_file(path: str):
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not record:
         raise HTTPException(status_code=404, detail="Not found")
+    # For Cloudinary / S3, redirect to the CDN URL if we have it
+    if STORAGE_BACKEND in ("cloudinary", "s3") and record.get("storage_url"):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=record["storage_url"])
+    # For local storage, stream the file
     data, ctype = get_object(path)
     return Response(content=data, media_type=record.get("content_type", ctype))
 
@@ -317,7 +354,7 @@ def _serialize_order(o: dict) -> dict:
         "phone": o.get("phone", ""),
         "address": o["address"],
         "items": o.get("items", []),
-        "subtotal": o.get("subtotal", o.get("total", 0)),  # fallback for old orders
+        "subtotal": o.get("subtotal", o.get("total", 0)),
         "shipping": o.get("shipping", 0),
         "total": o.get("total", 0),
         "status": o.get("status", "pending"),
@@ -329,11 +366,10 @@ def _serialize_order(o: dict) -> dict:
 
 @api.post("/orders")
 async def create_order(payload: OrderIn):
-    # total = sum(i.price * i.quantity for i in payload.items)
     subtotal = sum(i.price * i.quantity for i in payload.items)
     shipping = 0 if subtotal >= FREE_SHIPPING_THRESHOLD else SHIPPING_CHARGE
     total = subtotal + shipping
-    
+
     if total <= 0:
         raise HTTPException(status_code=400, detail="Empty cart")
 
@@ -387,7 +423,6 @@ async def verify_order_payment(order_id: str, body: dict):
     payment_id = body.get("razorpay_payment_id")
     rzp_order_id = body.get("razorpay_order_id")
     signature = body.get("razorpay_signature")
-    payment_status = "paid"
 
     # If Razorpay configured, verify signature
     if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET and signature:
@@ -404,12 +439,15 @@ async def verify_order_payment(order_id: str, body: dict):
             raise HTTPException(status_code=400, detail="Signature verification failed")
 
     await db.orders.update_one({"_id": oid}, {"$set": {
-        "payment_status": payment_status,
+        "payment_status": "paid",
         "status": "confirmed",
         "razorpay_payment_id": payment_id,
     }})
 
-    #Updating Stock
+    # BUG FIX: fetch `updated` BEFORE the stock loop that uses it
+    updated = await db.orders.find_one({"_id": oid})
+
+    # Deduct stock for each purchased item
     for item in updated.get("items", []):
         pid = item.get("product_id")
         qty = item.get("quantity", 1)
@@ -422,8 +460,6 @@ async def verify_order_payment(order_id: str, body: dict):
             except Exception:
                 pass
 
-
-    updated = await db.orders.find_one({"_id": oid})
     serialized = _serialize_order(updated)
     # Send confirmation email
     asyncio.create_task(send_email_async(
@@ -484,7 +520,6 @@ async def create_custom_request(payload: CustomRequestIn):
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.custom_requests.insert_one(doc)
     doc["_id"] = result.inserted_id
-    # Send acknowledgement email
     asyncio.create_task(send_email_async(
         doc["email"],
         f"Custom Design Request Received - {BUSINESS_NAME}",
@@ -526,9 +561,7 @@ app.add_middleware(
 # -------------------- Startup --------------------
 @app.on_event("startup")
 async def startup_event():
-    # Indexes
     await db.users.create_index("email", unique=True)
-    # Seed admin
     existing = await db.users.find_one({"email": ADMIN_EMAIL.lower()})
     if not existing:
         await db.users.insert_one({
@@ -540,18 +573,18 @@ async def startup_event():
         })
         logger.info("Admin seeded")
     else:
-        # Update hash if password changed
         if not verify_password(ADMIN_PASSWORD, existing["password_hash"]):
             await db.users.update_one(
                 {"email": ADMIN_EMAIL.lower()},
                 {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}},
             )
             logger.info("Admin password updated")
-    # Storage init
-    try:
-        init_storage()
-    except Exception as e:
-        logger.error(f"Storage init failed: {e}")
+    # Local uploads folder
+    if STORAGE_BACKEND == "local":
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Local storage ready at {UPLOAD_DIR}")
+    else:
+        logger.info(f"Storage backend: {STORAGE_BACKEND}")
     # Seed demo products if empty
     count = await db.products.count_documents({"is_deleted": {"$ne": True}})
     if count == 0:

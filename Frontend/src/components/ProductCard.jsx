@@ -17,6 +17,12 @@ export default function ProductCard({ product, index = 0 }) {
           className="w-full h-full object-cover zoom-img"
         />
         <span className="absolute top-4 left-4 label-eyebrow bg-bg/80 px-2 py-1">{product.category}</span>
+
+        {product.stock === 0 && (
+          <span className="absolute bottom-3 left-3 bg-bg text-muted text-xs tracking-widest uppercase px-2 py-1 border border-line">
+            Sold Out
+          </span>
+        )}
       </div>
       <div className="mt-4 flex justify-between items-start gap-2">
         <div>
