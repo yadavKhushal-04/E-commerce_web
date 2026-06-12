@@ -2,7 +2,7 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { X, Minus, Plus } from "lucide-react";
 import { useCart } from "../context/CartContext";
-import { fileUrl, formatINR } from "../lib/api";
+import { fileUrl, formatINR } from "../lib/api.js";
 
 export default function CartDrawer(){
   const { items, open, setOpen, remove, updateQty, total } = useCart();

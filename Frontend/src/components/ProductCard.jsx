@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { fileUrl, formatINR } from "../lib/api";
+import { fileUrl, formatINR } from "../lib/api.js";
 
 export default function ProductCard({ product, index = 0 }) {
   return (
