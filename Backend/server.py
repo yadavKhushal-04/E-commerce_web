@@ -36,7 +36,7 @@ RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 FREE_SHIPPING_THRESHOLD = 1499
-SHIPPING_CHARGE = 59
+SHIPPING_CHARGE = 5
 
 # -------------------- Storage Config --------------------
 # Choose ONE storage backend by setting STORAGE_BACKEND in your .env:
