@@ -639,12 +639,12 @@ async def startup_event():
                 {"$set": {"password_hash": hash_password(ADMIN_PASSWORD)}},
             )
             logger.info("Admin password updated")
-    # Local uploads folder
-    if STORAGE_BACKEND == "local":
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Local storage ready at {UPLOAD_DIR}")
-    else:
-        logger.info(f"Storage backend: {STORAGE_BACKEND}")
+    # # Local uploads folder
+    # if STORAGE_BACKEND == "local":
+    #     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    #     logger.info(f"Local storage ready at {UPLOAD_DIR}")
+    # else:
+    #     logger.info(f"Storage backend: {STORAGE_BACKEND}")
     # Seed demo products if empty
     count = await db.products.count_documents({"is_deleted": {"$ne": True}})
     if count == 0:
