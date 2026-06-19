@@ -39,25 +39,6 @@ FREE_SHIPPING_THRESHOLD = 1499
 SHIPPING_CHARGE = 59
 
 # -------------------- Storage Config --------------------
-# Choose ONE storage backend by setting STORAGE_BACKEND in your .env:
-#   STORAGE_BACKEND=cloudinary   → also set CLOUDINARY_URL
-#   STORAGE_BACKEND=s3           → also set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET_NAME, AWS_REGION
-#   STORAGE_BACKEND=local        → files saved to ./uploads/ folder (dev only, not for production)
-#
-# Example .env additions for Cloudinary:
-#   STORAGE_BACKEND=cloudinary
-#   CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name
-#
-# Example .env additions for S3 / R2 / B2:
-#   STORAGE_BACKEND=s3
-#   AWS_ACCESS_KEY_ID=your_key
-#   AWS_SECRET_ACCESS_KEY=your_secret
-#   S3_BUCKET_NAME=rekhay-atelier
-#   AWS_REGION=ap-south-1
-#   S3_ENDPOINT_URL=              ← leave blank for AWS; set for R2/B2 e.g. https://xxx.r2.cloudflarestorage.com
-#
-# Example .env additions for local (dev only):
-#   STORAGE_BACKEND=local
 STORAGE_BACKEND = os.environ.get('STORAGE_BACKEND', 'local').lower()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -71,12 +52,7 @@ db = client[DB_NAME]
 
 # ── Cloudinary ──────────────────────────────────────────────────────────────
 def _cloudinary_upload(data: bytes, path: str, content_type: str) -> dict:
-    """
-    Upload bytes to Cloudinary.
-    Requires: pip install cloudinary
-    .env:      CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name
-    """
-    import cloudinary                          # ← pip install cloudinary
+    import cloudinary
     import cloudinary.uploader
     # CLOUDINARY_URL is picked up automatically by the SDK
     public_id = path.replace("/", "_").rsplit(".", 1)[0]   # dots not allowed in public_id
@@ -100,91 +76,13 @@ def _cloudinary_get(path: str):
     """
     raise NotImplementedError("Cloudinary files are served via CDN URL, not proxied.")
 
-# ── S3 / Cloudflare R2 / Backblaze B2 ───────────────────────────────────────
-def _s3_upload(data: bytes, path: str, content_type: str) -> dict:
-    """
-    Upload bytes to S3-compatible storage.
-    Requires: pip install boto3
-    .env keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET_NAME,
-               AWS_REGION (default ap-south-1),
-               S3_ENDPOINT_URL (leave blank for real AWS, set for R2/B2)
-    """
-    import boto3                               # ← pip install boto3
-    endpoint = os.environ.get('S3_ENDPOINT_URL') or None
-    s3 = boto3.client(
-        "s3",
-        region_name=os.environ.get('AWS_REGION', 'ap-south-1'),
-        endpoint_url=endpoint,
-    )
-    bucket = os.environ['S3_BUCKET_NAME']
-    s3.put_object(
-        Bucket=bucket,
-        Key=path,
-        Body=data,
-        ContentType=content_type,
-        ACL="public-read",                     # remove if bucket is private
-    )
-    if endpoint:
-        url = f"{endpoint.rstrip('/')}/{bucket}/{path}"
-    else:
-        region = os.environ.get('AWS_REGION', 'ap-south-1')
-        url = f"https://{bucket}.s3.{region}.amazonaws.com/{path}"
-    return {"path": path, "url": url}
-
-def _s3_get(path: str):
-    """Download bytes from S3."""
-    import boto3
-    endpoint = os.environ.get('S3_ENDPOINT_URL') or None
-    s3 = boto3.client(
-        "s3",
-        region_name=os.environ.get('AWS_REGION', 'ap-south-1'),
-        endpoint_url=endpoint,
-    )
-    bucket = os.environ['S3_BUCKET_NAME']
-    obj = s3.get_object(Bucket=bucket, Key=path)
-    return obj["Body"].read(), obj["ContentType"]
-
-# ── Local filesystem (dev only) ──────────────────────────────────────────────
-UPLOAD_DIR = ROOT_DIR / "uploads"
-
-def _local_upload(data: bytes, path: str, content_type: str) -> dict:
-    """Save file to ./uploads/<path> on disk."""
-    dest = UPLOAD_DIR / path
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
-    return {"path": path, "url": f"/api/files/{path}"}
-
-def _local_get(path: str):
-    """Read file from ./uploads/<path>."""
-    dest = UPLOAD_DIR / path
-    if not dest.exists():
-        raise FileNotFoundError(path)
-    import mimetypes
-    ct = mimetypes.guess_type(str(dest))[0] or "application/octet-stream"
-    return dest.read_bytes(), ct
 
 # ── Public API ───────────────────────────────────────────────────────────────
 def put_object(path: str, data: bytes, content_type: str) -> dict:
-    """Upload a file using whichever backend is configured."""
-    if STORAGE_BACKEND == "cloudinary":
-        return _cloudinary_upload(data, path, content_type)
-    elif STORAGE_BACKEND == "s3":
-        return _s3_upload(data, path, content_type)
-    elif STORAGE_BACKEND == "local":
-        return _local_upload(data, path, content_type)
-    else:
-        raise RuntimeError(f"Unknown STORAGE_BACKEND='{STORAGE_BACKEND}'. Use: cloudinary, s3, or local.")
+    return _cloudinary_upload(data, path, content_type)
 
 def get_object(path: str):
-    """Download a file using whichever backend is configured."""
-    if STORAGE_BACKEND == "cloudinary":
-        return _cloudinary_get(path)
-    elif STORAGE_BACKEND == "s3":
-        return _s3_get(path)
-    elif STORAGE_BACKEND == "local":
-        return _local_get(path)
-    else:
-        raise RuntimeError(f"Unknown STORAGE_BACKEND='{STORAGE_BACKEND}'. Use: cloudinary, s3, or local.")
+    return _cloudinary_get(path)
 
 # -------------------- Auth helpers --------------------
 def hash_password(p: str) -> str:
